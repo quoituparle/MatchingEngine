@@ -42,6 +42,7 @@ public:
                 auto& queue = asks.begin()->second;
                 auto& resting = queue.front();
                 uint64_t excuted = std::min(resting.qty, qty);
+                std::cout << "Matched " << excuted << " at " << resting.price << '\n';
 
                 qty-=excuted;
                 resting.qty-=excuted;
@@ -49,12 +50,13 @@ public:
                 if (resting.qty == 0) queue.pop();
                 if (queue.empty()) asks.erase(asks.begin());
             };
-            if (qty > 0) bids.emplace({MakeId(), price, qty, TimeStamp(), side, Type::Limit});
+            if (qty > 0) bids[price].push({MakeId(), price, qty, TimeStamp(), side, Type::Limit});
         } else {
             while (qty > 0 && !bids.empty() && bids.begin()->first >= price) {
                 auto& queue = bids.begin()->second;
                 auto& resting = queue.front();
-                uint64_t excuted = queue.front();
+                uint64_t excuted = std::min(resting.qty, qty);
+                std::cout << "Matched " << excuted << " at " << resting.price << '\n';
 
                 qty-=excuted;
                 resting.qty-=excuted;
@@ -68,33 +70,29 @@ public:
 
     void MarketSubmit(uint64_t qty, Side side) {
         if (side == Side::Buy) {
+            if (asks.empty()) return;
             uint64_t price = asks.begin()->first;
             LimitSubmit(price, qty, side);
         } else {
+            if (bids.empty()) return;
             uint64_t price = bids.begin()->first;
             LimitSubmit(price, qty, side);
         }
     }
 };
 
-uint64_t TimeStamp() {
-    return static_cast<uint64_t>(
-        std::chrono::steady_clock::now().time_since_epoch().count();
-    );
-};
-
 int main(){
     MatchingEngine engine;
     std::cout << "Limit Buy" << '\n';
-    engine.submit({1, 100, 10, Side::Buy, TimeStamp()});
-    engine.submit({2, 98,  5, Side::Buy, TimeStamp()});
+    engine.LimitSubmit(100, 10, Side::Buy);
+    engine.LimitSubmit(105, 5, Side::Sell);
+    engine.LimitSubmit(95, 5, Side::Sell);
 
-    std::cout << "Complet deal with id1" << "\n";
-    engine.submit({3, 99, 10, Side::Sell, TimeStamp()});
+    engine.LimitSubmit(95, 10, Side::Sell);
+    engine.LimitSubmit(96, 10, Side::Sell);
 
-    std::cout << "Pending Order" << "\n";
-    engine.submit({4, 90, 100, Side::Buy, TimeStamp()});
-    engine.submit({5, 110, 100, Side::Sell, TimeStamp()});
+    std::cout <<"Market Order" << "\n";
+    engine.MarketSubmit(2, Side::Buy);
 
     return 0;
     
