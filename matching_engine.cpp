@@ -30,10 +30,11 @@ private:
         return static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
     };
 
-    uint64_t MakeId(){
-        const uint64_t time = TimeStamp();
-        return time;
-    };
+    uint64_t nextId = 1;
+
+    uint64_t MakeId() {
+        nextId++;
+    }
 
 public:
     void LimitSubmit(uint64_t price, uint64_t qty, Side side) {
