@@ -33,11 +33,11 @@ private:
     uint64_t nextId = 1;
 
     uint64_t MakeId() {
-        nextId++;
-    }
+        return nextId++;
+    };
 
 public:
-    void LimitSubmit(uint64_t price, uint64_t qty, Side side) {
+    void LimitSubmit(uint64_t price, uint64_t qty, Side side, Type type = Type::Limit) {
         if (side == Side::Buy) {
             while (qty > 0 && !asks.empty() && asks.begin()->first <= price) {
                 auto& queue = asks.begin()->second;
@@ -51,7 +51,7 @@ public:
                 if (resting.qty == 0) queue.pop();
                 if (queue.empty()) asks.erase(asks.begin());
             };
-            if (qty > 0) bids[price].push({MakeId(), price, qty, TimeStamp(), side, Type::Limit});
+            if (qty > 0 && type == Type::Limit) bids[price].push({MakeId(), price, qty, TimeStamp(), side, type});
         } else {
             while (qty > 0 && !bids.empty() && bids.begin()->first >= price) {
                 auto& queue = bids.begin()->second;
@@ -65,18 +65,18 @@ public:
                 if (resting.qty == 0) queue.pop();
                 if (queue.empty()) bids.erase(bids.begin());
             };
-            if (qty > 0) asks[price].push({MakeId(), price, qty, TimeStamp(), side, Type::Limit});
+            if (qty > 0 && type == Type::Limit) asks[price].push({MakeId(), price, qty, TimeStamp(), side, type});
         };
     };
 
     void MarketSubmit(uint64_t qty, Side side) {
         if (side == Side::Buy) {
             if (asks.empty()) return;
-            LimitSubmit(UINT64_MAX, qty, side);
+            LimitSubmit(UINT64_MAX, qty, side, Type::Market);
         } else {
             if (bids.empty()) return;
             uint64_t price = bids.begin()->first;
-            LimitSubmit(0, qty, side);
+            LimitSubmit(0, qty, side, Type::Market);
         }
     }
 };
