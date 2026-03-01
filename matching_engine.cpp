@@ -71,12 +71,11 @@ public:
     void MarketSubmit(uint64_t qty, Side side) {
         if (side == Side::Buy) {
             if (asks.empty()) return;
-            uint64_t price = asks.begin()->first;
-            LimitSubmit(price, qty, side);
+            LimitSubmit(UINT64_MAX, qty, side);
         } else {
             if (bids.empty()) return;
             uint64_t price = bids.begin()->first;
-            LimitSubmit(price, qty, side);
+            LimitSubmit(0, qty, side);
         }
     }
 };
@@ -84,15 +83,16 @@ public:
 int main(){
     MatchingEngine engine;
     std::cout << "Limit Buy" << '\n';
-    engine.LimitSubmit(100, 10, Side::Buy);
+    engine.LimitSubmit(100, 2, Side::Buy);
     engine.LimitSubmit(105, 5, Side::Sell);
     engine.LimitSubmit(95, 5, Side::Sell);
 
+    engine.LimitSubmit(94, 2, Side::Sell);
     engine.LimitSubmit(95, 10, Side::Sell);
     engine.LimitSubmit(96, 10, Side::Sell);
 
     std::cout <<"Market Order" << "\n";
-    engine.MarketSubmit(2, Side::Buy);
+    engine.MarketSubmit(20, Side::Buy);
 
     return 0;
     
