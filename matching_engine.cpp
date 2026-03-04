@@ -11,7 +11,7 @@
 #include <chrono>
 
 enum struct Side{ Buy, Sell };
-enum struct Type{ Market, Limit};
+enum struct Type{ Market, Limit, PostOnly};
 
 struct Order{
     uint64_t id;
@@ -45,9 +45,8 @@ private:
         return nextId++;
     };
 
-
-public:
     void LimitSubmit(uint64_t price, uint64_t qty, Side side, Type type = Type::Limit) {
+        uint64_t orderId = MakeId();
         if (side == Side::Buy) {
             while (qty > 0 && !asks.empty() && asks.begin()->first <= price) {
                 auto& queue = asks.begin()->second;
@@ -57,10 +56,16 @@ public:
                 qty-=excuted;
                 resting.qty-=excuted;
 
-                if (resting.qty == 0) queue.pop_front();
+                if (resting.qty == 0) {
+                    orderIndex.erase(resting.id);
+                    queue.pop_front();
+                }
                 if (queue.empty()) asks.erase(asks.begin());
             };
-            if (qty > 0 && type == Type::Limit) bids[price].push_back({MakeId(), price, qty, TimeStamp(), side, type});
+            if (qty > 0 && type == Type::Limit) {
+                bids[price].push_back({orderId, price, qty, TimeStamp(), side, type});
+                orderIndex[orderId] = {side, price, std::prev(bids[price].end())}
+            }
         } else {
             while (qty > 0 && !bids.empty() && bids.begin()->first >= price) {
                 auto& queue = bids.begin()->second;
@@ -70,10 +75,16 @@ public:
                 qty-=excuted;
                 resting.qty-=excuted;
 
-                if (resting.qty == 0) queue.pop_front();
+                if (resting.qty == 0) {
+                    orderIndex.erase(resting.id);
+                    queue.pop_front();
+                }
                 if (queue.empty()) bids.erase(bids.begin());
             };
-            if (qty > 0 && type == Type::Limit) asks[price].push_back({MakeId(), price, qty, TimeStamp(), side, type});
+            if (qty > 0 && type == Type::Limit) {
+                asks[price].push_back({orderId, price, qty, TimeStamp(), side, type});
+                orderIndex[orderId] = {side, price, std::prev(asks[price].end())}
+            }
         };
     };
 
@@ -86,7 +97,30 @@ public:
             uint64_t price = bids.begin()->first;
             LimitSubmit(0, qty, side, Type::Market);
         }
-    };                            
+    };
+
+    void PostOnly(uint64_t price, uint64_t qty, Side side) {
+        Type type = Type::PostOnly;
+        uint64_t Id = MakeId();
+        if (side == Side::Buy) {
+            if (qty <= 0 && asks.empty() && asks.begin()->first <= price) return;
+            bids[price].push_back({Id, price, qty, TimeStamp(), side, type});
+            orderIndex[Id] = {side, price, std::prev(bids[price].end())};
+        } else {
+            if (qty <= 0 && bids.empty() && bids.begin()->first >= price) return;
+            asks[price].push_back({Id, price, qty, TimeStamp(), side, type});
+            orderIndex[Id] = {side, price, std::prev(asks[price].end())};
+        }
+    };
+
+
+
+public:
+    void Submit(uint64_t price, uint64_t qty, Side side, Type type) {
+        if (type == Type::Limit) LimitSubmit(price, qty, side, Type);
+        if (type == Type::Market) MarketSubmit(qty, side);
+        if (type == Type::PostOnly) PostOnly(price, qty, side);
+    };
 
     void CancelOrder(uint64_t Id) {
         auto it = orderIndex.find(Id);
@@ -119,19 +153,7 @@ public:
 
 int main(){
     MatchingEngine engine;
-    std::cout << "Limit Buy" << '\n';
-    engine.LimitSubmit(100, 2, Side::Buy);
-    engine.LimitSubmit(105, 5, Side::Sell);
-    engine.LimitSubmit(95, 5, Side::Sell);
 
-    engine.LimitSubmit(94, 2, Side::Sell);
-    engine.LimitSubmit(95, 10, Side::Sell);
-    engine.LimitSubmit(96, 10, Side::Sell);
-
-    std::cout <<"Market Order" << '\n';
-    engine.MarketSubmit(20, Side::Buy);
-
-    engine.PrintBooks();
 
     return 0;
     
