@@ -22,6 +22,82 @@ struct Order{
     Type type;
 };
 
+struct Block{
+    Block* next;
+};
+
+// for Lockless ABA
+struct alignas(16) Tagged{ 
+    Block* ptr;
+    uintptr_t version;
+};
+
+
+class MemoryPool{
+private:
+    std::atomic<Tagged> freeHead;
+    char* memoryChunk;
+public:
+    MemoryPool(size_t objectCount) {
+        size_t blockSize = sizeof(Order);
+        size_t totalBytes = objectCount * blockSize;
+
+        void* rawPtr = _aligned_malloc(totalBytes, 64);
+        if (!rawPtr) throw std::bad_alloc();
+
+        memoryChunk = static_cast<char*>(rawPtr);
+        Block* head = reinterpret_cast<Block*>(memoryChunk);
+        Block* current = head;
+
+        for (size_t i = 0; i < objectCount; ++i) {
+            char* nextAddress = reinterpret_cast<char*>(current) + blockSize;
+            current->next = reinterpret_cast<Block*>(nextAddress);
+            current = current->next;
+        }
+        current->next = nullptr;
+
+        Tagged initHead; // For Lock-free initializing
+        initHead.ptr = head;
+        initHead.version = 0;
+
+        freeHead.store(initHead);
+    };
+
+    ~MemoryPool(){
+        _aligned_free(memoryChunk);
+    };
+
+    char* allocate() { // CAS process
+        Tagged oldHead = freeHead.load();
+        while (true) {
+            Tagged newHead;
+            newHead.ptr = oldHead.ptr->next;
+            newHead.version = oldHead.version + 1;
+
+            if (freeHead.compare_exchange_weak(oldHead, newHead)) {
+                return oldHead;
+            }
+        }
+    };
+
+    void deallocate(void* p) {
+        Block* BlockToRecycle = reinterpret_cast<Block*>(p);
+        Tagged oldHead = freeHead.load();
+
+        while (true) {
+            BlockToRecycle->next = oldHead.ptr;
+
+            Tagged newHead;
+            newHead.ptr = BlockToRecycle;
+            newHead.version = oldHead.version + 1;
+
+            if (freeHead.compare_exchange_weak(oldHead, newHead)) {
+                break;
+            }
+        }
+    };
+};
+
 class MatchingEngine {
 private:
     std::map<uint64_t, std::list<Order>, std::greater<uint64_t>> bids; // highest buy
@@ -64,8 +140,8 @@ private:
             };
             if (qty > 0 && type == Type::Limit) {
                 bids[price].push_back({orderId, price, qty, TimeStamp(), side, type});
-                orderIndex[orderId] = {side, price, std::prev(bids[price].end())}
-            }
+                orderIndex[orderId] = {side, price, std::prev(bids[price].end())};
+            };
         } else {
             while (qty > 0 && !bids.empty() && bids.begin()->first >= price) {
                 auto& queue = bids.begin()->second;
@@ -83,7 +159,7 @@ private:
             };
             if (qty > 0 && type == Type::Limit) {
                 asks[price].push_back({orderId, price, qty, TimeStamp(), side, type});
-                orderIndex[orderId] = {side, price, std::prev(asks[price].end())}
+                orderIndex[orderId] = {side, price, std::prev(asks[price].end())};
             }
         };
     };
@@ -103,11 +179,11 @@ private:
         Type type = Type::PostOnly;
         uint64_t Id = MakeId();
         if (side == Side::Buy) {
-            if (qty <= 0 && asks.empty() && asks.begin()->first <= price) return;
+            if (asks.empty() && asks.begin()->first <= price) return;
             bids[price].push_back({Id, price, qty, TimeStamp(), side, type});
             orderIndex[Id] = {side, price, std::prev(bids[price].end())};
         } else {
-            if (qty <= 0 && bids.empty() && bids.begin()->first >= price) return;
+            if (bids.empty() && bids.begin()->first >= price) return;
             asks[price].push_back({Id, price, qty, TimeStamp(), side, type});
             orderIndex[Id] = {side, price, std::prev(asks[price].end())};
         }
@@ -117,7 +193,7 @@ private:
 
 public:
     void Submit(uint64_t price, uint64_t qty, Side side, Type type) {
-        if (type == Type::Limit) LimitSubmit(price, qty, side, Type);
+        if (type == Type::Limit) LimitSubmit(price, qty, side, type);
         if (type == Type::Market) MarketSubmit(qty, side);
         if (type == Type::PostOnly) PostOnly(price, qty, side);
     };
@@ -128,8 +204,10 @@ public:
         auto& loc = it->second;
         if (loc.side == Side::Buy) {
             bids[loc.price].erase(loc.iterator);
+            if (bids[loc.price].empty()) bids.erase(loc.price);
         } else {
             asks[loc.price].erase(loc.iterator);
+            if (bids[loc.price].empty()) bids.erase(loc.price);
         };
     };
 
@@ -151,10 +229,22 @@ public:
     };
 };
 
+
+
 int main(){
     MatchingEngine engine;
+    for (int price = 90; price < 100; ++price) {
+        engine.Submit(price, 10, Side::Buy, Type::Limit);
+    };
 
+    for (int price = 100; price < 111; ++price) {
+        engine.Submit(price, 10, Side::Sell, Type::Limit);
+    };
 
+    engine.CancelOrder(6);
+    engine.Submit(103, 5, Side::Buy, Type::PostOnly);
+
+    engine.PrintBooks();
     return 0;
     
 }
