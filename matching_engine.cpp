@@ -13,15 +13,6 @@
 enum struct Side{ Buy, Sell };
 enum struct Type{ Market, Limit, PostOnly};
 
-struct Order{
-    uint64_t id;
-    uint64_t price;
-    uint64_t qty;
-    uint64_t time;
-    Side side;
-    Type type;
-};
-
 struct Block{
     Block* next;
 };
@@ -32,14 +23,14 @@ struct alignas(16) Tagged{
     uintptr_t version;
 };
 
-
+template<typename T>
 class MemoryPool{
 private:
     std::atomic<Tagged> freeHead;
     char* memoryChunk;
 public:
     MemoryPool(size_t objectCount) {
-        size_t blockSize = sizeof(Order);
+        size_t blockSize = sizeof(T);
         size_t totalBytes = objectCount * blockSize;
 
         void* rawPtr = _aligned_malloc(totalBytes, 64);
@@ -67,7 +58,7 @@ public:
         _aligned_free(memoryChunk);
     };
 
-    char* allocate() { // CAS process
+    T* allocate() { // CAS process
         Tagged oldHead = freeHead.load();
         while (true) {
             Tagged newHead;
@@ -75,12 +66,13 @@ public:
             newHead.version = oldHead.version + 1;
 
             if (freeHead.compare_exchange_weak(oldHead, newHead)) {
-                return oldHead;
+                return reinterpret_cast<T*>(oldHead);
             }
         }
     };
 
-    void deallocate(void* p) {
+    void deallocate(T* p) {
+        if (!p) return;
         Block* BlockToRecycle = reinterpret_cast<Block*>(p);
         Tagged oldHead = freeHead.load();
 
@@ -96,6 +88,15 @@ public:
             }
         }
     };
+};
+
+struct Order{
+    uint64_t id;
+    uint64_t price;
+    uint64_t qty;
+    uint64_t time;
+    Side side;
+    Type type;
 };
 
 class MatchingEngine {
