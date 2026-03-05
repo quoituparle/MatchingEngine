@@ -40,7 +40,7 @@ public:
         Block* head = reinterpret_cast<Block*>(memoryChunk);
         Block* current = head;
 
-        for (size_t i = 0; i < objectCount; ++i) {
+        for (size_t i = 0; i < objectCount - 1; ++i) {
             char* nextAddress = reinterpret_cast<char*>(current) + blockSize;
             current->next = reinterpret_cast<Block*>(nextAddress);
             current = current->next;
@@ -66,7 +66,7 @@ public:
             newHead.version = oldHead.version + 1;
 
             if (freeHead.compare_exchange_weak(oldHead, newHead)) {
-                return reinterpret_cast<T*>(oldHead);
+                return reinterpret_cast<T*>(oldHead.ptr);
             }
         }
     };
@@ -97,20 +97,49 @@ struct Order{
     uint64_t time;
     Side side;
     Type type;
+    Order* next;
+    Order* prev;
+};
+
+struct Queue{
+    Order* head = nullptr;
+    Order* tail = nullptr;
+
+    // FIFO
+    // oN(Tail) -> ... -> o3 -> o2 -> o1(Head)
+    void intrusive_push_back(Order* order) { // Use intrusive list instead of original double list;
+        order->next = nullptr;
+        if (!tail) {
+            head = tail = order;
+            order->prev = nullptr;
+        } else {
+            tail->next = order;
+            order->prev = tail;
+            tail = order;
+        }
+    };
+
+    void remove(Order* order) { // to replace pop()
+        if (order->prev) {
+            order->prev->next = order->next;
+        } else head = order->next;
+        if (order->next) {
+            order->next->prev = order->prev;
+        } else tail = order->prev;
+    }
+
+    bool empty() const {
+        return head == nullptr;
+    }
 };
 
 class MatchingEngine {
 private:
-    std::map<uint64_t, std::list<Order>, std::greater<uint64_t>> bids; // highest buy
-    std::map<uint64_t, std::list<Order>, std::less<uint64_t>> asks; // lowest sell
+    MemoryPool<Order> pool;
+    std::map<uint64_t, Queue, std::greater<uint64_t>> bids; // highest buy
+    std::map<uint64_t, Queue, std::less<uint64_t>> asks; // lowest sell
 
-    struct OrderLocation{
-        Side side;
-        uint64_t price;
-        std::list<Order>::iterator iterator;
-    };
-
-    std::unordered_map<uint64_t, OrderLocation> orderIndex; // for O(1) search and cancel shares.
+    std::unordered_map<uint64_t, Order*> orderIndex; // for O(1) search and cancel shares.
 
     uint64_t TimeStamp(){
         return static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -127,40 +156,45 @@ private:
         if (side == Side::Buy) {
             while (qty > 0 && !asks.empty() && asks.begin()->first <= price) {
                 auto& queue = asks.begin()->second;
-                auto& resting = queue.front();
-                uint64_t excuted = std::min(resting.qty, qty);
+                Order* resting = queue.head;
+                uint64_t excuted = std::min(resting->qty, qty);
 
                 qty-=excuted;
-                resting.qty-=excuted;
+                resting->qty-=excuted;
 
-                if (resting.qty == 0) {
-                    orderIndex.erase(resting.id);
-                    queue.pop_front();
-                }
-                if (queue.empty()) asks.erase(asks.begin());
-            };
-            if (qty > 0 && type == Type::Limit) {
-                bids[price].push_back({orderId, price, qty, TimeStamp(), side, type});
-                orderIndex[orderId] = {side, price, std::prev(bids[price].end())};
-            };
-        } else {
-            while (qty > 0 && !bids.empty() && bids.begin()->first >= price) {
-                auto& queue = bids.begin()->second;
-                auto& resting = queue.front();
-                uint64_t excuted = std::min(resting.qty, qty);
-
-                qty-=excuted;
-                resting.qty-=excuted;
-
-                if (resting.qty == 0) {
-                    orderIndex.erase(resting.id);
-                    queue.pop_front();
+                if (resting->qty == 0) {
+                    orderIndex.erase(resting->id);
+                    queue.remove(resting);
+                    pool.deallocate(resting);
                 }
                 if (queue.empty()) bids.erase(bids.begin());
             };
             if (qty > 0 && type == Type::Limit) {
-                asks[price].push_back({orderId, price, qty, TimeStamp(), side, type});
-                orderIndex[orderId] = {side, price, std::prev(asks[price].end())};
+                Order* order = pool.allocate();
+                new (order) Order{orderId, price, qty, TimeStamp(), side, type, nullptr, nullptr};
+                bids[price].intrusive_push_back(order);
+                orderIndex[order->id] = order;
+            };
+        } else {
+            while (qty > 0 && !bids.empty() && bids.begin()->first >= price) {
+                auto& queue = bids.begin()->second;
+                Order* resting = queue.head;
+                uint64_t excuted = std::min(resting->qty, qty);
+
+                qty-=excuted;
+                resting->qty-=excuted;
+
+                if (resting->qty == 0) {
+                    orderIndex.erase(resting->id);
+                    queue.remove(resting);
+                }
+                if (queue.empty()) bids.erase(bids.begin());
+            };
+            if (qty > 0 && type == Type::Limit) {
+                Order* order = pool.allocate();
+                new (order) Order{orderId, price, qty, TimeStamp(), side, type, nullptr, nullptr};
+                asks[price].intrusive_push_back(order);
+                orderIndex[order->id] = order;
             }
         };
     };
@@ -181,53 +215,70 @@ private:
         uint64_t Id = MakeId();
         if (side == Side::Buy) {
             if (asks.empty() && asks.begin()->first <= price) return;
-            bids[price].push_back({Id, price, qty, TimeStamp(), side, type});
-            orderIndex[Id] = {side, price, std::prev(bids[price].end())};
+
+            Order* order = pool.allocate();
+            new (order) Order{Id, price, qty, TimeStamp(), side, type, nullptr, nullptr};
+            bids[price].intrusive_push_back(order);
+            orderIndex[order->id] = order;
         } else {
             if (bids.empty() && bids.begin()->first >= price) return;
-            asks[price].push_back({Id, price, qty, TimeStamp(), side, type});
-            orderIndex[Id] = {side, price, std::prev(asks[price].end())};
+
+            Order* order = pool.allocate();
+            new (order) Order{Id, price, qty, TimeStamp(), side, type, nullptr, nullptr};
+            asks[price].intrusive_push_back(order);
+            orderIndex[order->id] = order;
         }
     };
 
 
 
 public:
+    MatchingEngine(size_t poolSize = 100000) : pool(poolSize) {}
+
     void Submit(uint64_t price, uint64_t qty, Side side, Type type) {
         if (type == Type::Limit) LimitSubmit(price, qty, side, type);
         if (type == Type::Market) MarketSubmit(qty, side);
         if (type == Type::PostOnly) PostOnly(price, qty, side);
     };
 
-    void CancelOrder(uint64_t Id) {
-        auto it = orderIndex.find(Id);
+    void CancelOrder(uint64_t id) {
+        auto it = orderIndex.find(id);
         if (it == orderIndex.end()) return;
-        auto& loc = it->second;
-        if (loc.side == Side::Buy) {
-            bids[loc.price].erase(loc.iterator);
-            if (bids[loc.price].empty()) bids.erase(loc.price);
+        
+        Order* target = it->second;
+        orderIndex.erase(it);
+
+        if (target->side == Side::Buy) {
+            bids[target->price].remove(target);
+            if (bids[target->price].empty()) bids.erase(target->price);
         } else {
-            asks[loc.price].erase(loc.iterator);
-            if (bids[loc.price].empty()) bids.erase(loc.price);
-        };
-    };
+            asks[target->price].remove(target);
+            if (asks[target->price].empty()) asks.erase(target->price);
+        }
+        
+        pool.deallocate(target);
+    }
 
     void PrintBooks() {
         for (auto i = asks.rbegin(); i != asks.rend(); ++i) {
-            for (const auto & order : i->second) {
-                std::cout << "ID: " << order.id << " Price: " << order.price << " $ " <<" Qty: " << order.qty << '\n';
+            Order* current = i->second.head;
+            while (current) {
+                std::cout << "ID: " << current->id << " Price: " << current->price 
+                          << " $ Qty: " << current->qty << '\n';
+                current = current->next;
             }
         }
-        std::cout << "Asks: " << '\n';
-        std::cout << "     ----------------" << '\n';
-        std::cout << "Bits: " << '\n';
+        std::cout << "Asks: \n     ----------------\nBits: \n";
 
         for (auto i = bids.begin(); i != bids.end(); ++i) {
-            for (const auto& order : i->second) {
-                std::cout << "ID: " << order.id << " Price: " << order.price << " $ " <<" Qty: " << order.qty << '\n';
+            Order* current = i->second.head;
+            while (current) {
+                std::cout << "ID: " << current->id << " Price: " << current->price 
+                          << " $ Qty: " << current->qty << '\n';
+                current = current->next;
             }
         }
-    };
+    }
 };
 
 
