@@ -188,7 +188,7 @@ private:
                     orderIndex.erase(resting->id);
                     queue.remove(resting);
                 }
-                if (queue.empty()) bids.erase(bids.begin());
+                if (queue.empty()) asks.erase(bids.begin());
             };
             if (qty > 0 && type == Type::Limit) {
                 Order* order = pool.allocate();
@@ -214,14 +214,14 @@ private:
         Type type = Type::PostOnly;
         uint64_t Id = MakeId();
         if (side == Side::Buy) {
-            if (asks.empty() && asks.begin()->first <= price) return;
+            if (!asks.empty() && asks.begin()->first <= price) return;
 
             Order* order = pool.allocate();
             new (order) Order{Id, price, qty, TimeStamp(), side, type, nullptr, nullptr};
             bids[price].intrusive_push_back(order);
             orderIndex[order->id] = order;
         } else {
-            if (bids.empty() && bids.begin()->first >= price) return;
+            if (!bids.empty() && bids.begin()->first >= price) return;
 
             Order* order = pool.allocate();
             new (order) Order{Id, price, qty, TimeStamp(), side, type, nullptr, nullptr};
