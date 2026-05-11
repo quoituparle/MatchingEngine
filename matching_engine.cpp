@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <queue>
 #include <chrono>
+#include <SPSCQueue.h>
 
 enum struct Side{ Buy, Sell };
 enum struct Type{ Market, Limit, PostOnly};
