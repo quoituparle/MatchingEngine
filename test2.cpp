@@ -1,146 +1,294 @@
 #include <iostream>
-#include <vector>
-#include <string>
+#include <atomic>
 #include <map>
-#include <queue>
-#include <algorithm>
+#include <unordered_map>
+#include <chrono>
 #include <cstdint>
+#include <malloc.h>
+#include <algorithm>
 
-enum class Side {
-    Buy,
-    Sell
+enum struct Side { Buy, Sell };
+enum struct Type { Market, Limit, PostOnly };
+
+struct Block {
+    Block* next;
+};
+
+struct alignas(16) Tagged {
+    Block* ptr;
+    uintptr_t version;
+};
+
+template<typename T>
+class MemoryPool {
+private:
+    std::atomic<Tagged> freeHead;
+    char* memoryChunk;
+public:
+    MemoryPool(size_t objectCount) {
+        size_t blockSize = sizeof(T);
+        void* rawPtr = _aligned_malloc(objectCount * blockSize, 64);
+        if (!rawPtr) throw std::bad_alloc();
+
+        memoryChunk = static_cast<char*>(rawPtr);
+        Block* current = reinterpret_cast<Block*>(memoryChunk);
+
+        for (size_t i = 0; i < objectCount - 1; ++i) {
+            current->next = reinterpret_cast<Block*>(reinterpret_cast<char*>(current) + blockSize);
+            current = current->next;
+        }
+        current->next = nullptr;
+
+        Tagged initHead{reinterpret_cast<Block*>(memoryChunk), 0};
+        freeHead.store(initHead);
+    }
+
+    ~MemoryPool() {
+        _aligned_free(memoryChunk);
+    }
+
+    T* allocate() {
+        Tagged oldHead = freeHead.load();
+        while (true) {
+            if (!oldHead.ptr) return nullptr;
+            Tagged newHead{oldHead.ptr->next, oldHead.version + 1};
+            if (freeHead.compare_exchange_weak(oldHead, newHead)) {
+                return reinterpret_cast<T*>(oldHead.ptr);
+            }
+        }
+    }
+
+    void deallocate(T* p) {
+        if (!p) return;
+        Block* blockToRecycle = reinterpret_cast<Block*>(p);
+        Tagged oldHead = freeHead.load();
+        while (true) {
+            blockToRecycle->next = oldHead.ptr;
+            Tagged newHead{blockToRecycle, oldHead.version + 1};
+            if (freeHead.compare_exchange_weak(oldHead, newHead)) {
+                break;
+            }
+        }
+    }
 };
 
 struct Order {
     uint64_t id;
     uint64_t price;
     uint64_t qty;
+    uint64_t time;
     Side side;
+    Type type;
+    Order* next = nullptr;
+    Order* prev = nullptr;
+};
+
+struct OrderQueue {
+    Order* head = nullptr;
+    Order* tail = nullptr;
+
+    void push_back(Order* order) {
+        order->next = nullptr;
+        if (!tail) {
+            head = tail = order;
+            order->prev = nullptr;
+        } else {
+            tail->next = order;
+            order->prev = tail;
+            tail = order;
+        }
+    }
+
+    void remove(Order* order) {
+        if (order->prev) order->prev->next = order->next;
+        else head = order->next;
+        if (order->next) order->next->prev = order->prev;
+        else tail = order->prev;
+    }
+
+    bool empty() const {
+        return head == nullptr;
+    }
 };
 
 class MatchingEngine {
 private:
-    // Bids (Buy orders) sorted highest price to lowest
-    std::map<uint64_t, std::queue<Order>, std::greater<uint64_t>> bids;
-    // Asks (Sell orders) sorted lowest price to highest
-    std::map<uint64_t, std::queue<Order>> asks;
+    MemoryPool<Order> pool;
+    std::map<uint64_t, OrderQueue, std::greater<uint64_t>> bids;
+    std::map<uint64_t, OrderQueue, std::less<uint64_t>> asks;
+    std::unordered_map<uint64_t, Order*> orderIndex;
+    uint64_t nextId = 1;
+
+    uint64_t TimeStamp() {
+        return static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+    }
+
+    uint64_t MakeId() {
+        return nextId++;
+    }
+
+    void LimitSubmit(uint64_t price, uint64_t qty, Side side, Type type = Type::Limit) {
+        if (side == Side::Buy) {
+            while (qty > 0 && !asks.empty() && asks.begin()->first <= price) {
+                auto& queue = asks.begin()->second;
+                Order* resting = queue.head;
+                uint64_t executed = std::min(resting->qty, qty);
+
+                qty -= executed;
+                resting->qty -= executed;
+
+                if (resting->qty == 0) {
+                    orderIndex.erase(resting->id);
+                    queue.remove(resting);
+                    pool.deallocate(resting);
+                }
+                if (queue.empty()) asks.erase(asks.begin());
+            }
+            if (qty > 0 && type == Type::Limit) {
+                Order* newOrder = pool.allocate();
+                if (!newOrder) return;
+                newOrder->id = MakeId();
+                newOrder->price = price;
+                newOrder->qty = qty;
+                newOrder->time = TimeStamp();
+                newOrder->side = side;
+                newOrder->type = type;
+                bids[price].push_back(newOrder);
+                orderIndex[newOrder->id] = newOrder;
+            }
+        } else {
+            while (qty > 0 && !bids.empty() && bids.begin()->first >= price) {
+                auto& queue = bids.begin()->second;
+                Order* resting = queue.head;
+                uint64_t executed = std::min(resting->qty, qty);
+
+                qty -= executed;
+                resting->qty -= executed;
+
+                if (resting->qty == 0) {
+                    orderIndex.erase(resting->id);
+                    queue.remove(resting);
+                    pool.deallocate(resting);
+                }
+                if (queue.empty()) bids.erase(bids.begin());
+            }
+            if (qty > 0 && type == Type::Limit) {
+                Order* newOrder = pool.allocate();
+                if (!newOrder) return;
+                newOrder->id = MakeId();
+                newOrder->price = price;
+                newOrder->qty = qty;
+                newOrder->time = TimeStamp();
+                newOrder->side = side;
+                newOrder->type = type;
+                asks[price].push_back(newOrder);
+                orderIndex[newOrder->id] = newOrder;
+            }
+        }
+    }
+
+    void MarketSubmit(uint64_t qty, Side side) {
+        if (side == Side::Buy) {
+            if (asks.empty()) return;
+            LimitSubmit(UINT64_MAX, qty, side, Type::Market);
+        } else {
+            if (bids.empty()) return;
+            LimitSubmit(0, qty, side, Type::Market);
+        }
+    }
+
+    void PostOnly(uint64_t price, uint64_t qty, Side side) {
+        if (side == Side::Buy) {
+            if (!asks.empty() && asks.begin()->first <= price) return;
+            Order* newOrder = pool.allocate();
+            if (!newOrder) return;
+            newOrder->id = MakeId();
+            newOrder->price = price;
+            newOrder->qty = qty;
+            newOrder->time = TimeStamp();
+            newOrder->side = side;
+            newOrder->type = Type::PostOnly;
+            bids[price].push_back(newOrder);
+            orderIndex[newOrder->id] = newOrder;
+        } else {
+            if (!bids.empty() && bids.begin()->first >= price) return;
+            Order* newOrder = pool.allocate();
+            if (!newOrder) return;
+            newOrder->id = MakeId();
+            newOrder->price = price;
+            newOrder->qty = qty;
+            newOrder->time = TimeStamp();
+            newOrder->side = side;
+            newOrder->type = Type::PostOnly;
+            asks[price].push_back(newOrder);
+            orderIndex[newOrder->id] = newOrder;
+        }
+    }
 
 public:
-    void submit(Order order) {
-        if (order.side == Side::Buy) {
-            match_buy(order);
+    MatchingEngine(size_t poolSize = 100000) : pool(poolSize) {}
+
+    void Submit(uint64_t price, uint64_t qty, Side side, Type type) {
+        if (type == Type::Limit) LimitSubmit(price, qty, side, type);
+        if (type == Type::Market) MarketSubmit(qty, side);
+        if (type == Type::PostOnly) PostOnly(price, qty, side);
+    }
+
+    void CancelOrder(uint64_t id) {
+        auto it = orderIndex.find(id);
+        if (it == orderIndex.end()) return;
+        
+        Order* target = it->second;
+        orderIndex.erase(it);
+
+        if (target->side == Side::Buy) {
+            bids[target->price].remove(target);
+            if (bids[target->price].empty()) bids.erase(target->price);
         } else {
-            match_sell(order);
+            asks[target->price].remove(target);
+            if (asks[target->price].empty()) asks.erase(target->price);
         }
+        
+        pool.deallocate(target);
     }
 
-    void cancel_order(const std::string& order_id) {
-        std::cout << "Cancelling order: " << order_id << "\n";
-        // To truly remove from std::queue in O(1), a different data structure 
-        // (like an intrusive list or a map of ID to order) would be needed.
-    }
-
-    void print_book() const {
-        std::cout << "--- Order Book ---\n";
-        std::cout << "Asks:\n";
-        // Iterate backwards through asks to show highest asks first, down to lowest ask
-        for (auto it = asks.rbegin(); it != asks.rend(); ++it) {
-            uint64_t total_qty = 0;
-            std::queue<Order> temp = it->second;
-            while(!temp.empty()) {
-                total_qty += temp.front().qty;
-                temp.pop();
-            }
-            std::cout << it->first << " : " << total_qty << "\n";
-        }
-        std::cout << "Bids:\n";
-        for (const auto& [price, q] : bids) {
-            uint64_t total_qty = 0;
-            std::queue<Order> temp = q;
-            while(!temp.empty()) {
-                total_qty += temp.front().qty;
-                temp.pop();
-            }
-            std::cout << price << " : " << total_qty << "\n";
-        }
-        std::cout << "------------------\n";
-    }
-
-private:
-    void match_buy(Order& order) {
-        while (order.qty > 0 && !asks.empty() && asks.begin()->first <= order.price) {
-            auto& ask_queue = asks.begin()->second;
-            Order& resting_ask = ask_queue.front();
-
-            uint64_t trade_qty = std::min(resting_ask.qty, order.qty);
-            std::cout << "Trade Executed: " << trade_qty << " @ " << asks.begin()->first 
-                      << " (Buy Order " << order.id << " hits Sell Order " << resting_ask.id << ")\n";
-
-            order.qty -= trade_qty;
-            resting_ask.qty -= trade_qty;
-
-            if (resting_ask.qty == 0) {
-                ask_queue.pop();
-            }
-
-            if (ask_queue.empty()) {
-                asks.erase(asks.begin());
+    void PrintBooks() {
+        for (auto i = asks.rbegin(); i != asks.rend(); ++i) {
+            Order* current = i->second.head;
+            while (current) {
+                std::cout << "ID: " << current->id << " Price: " << current->price 
+                          << " $ Qty: " << current->qty << '\n';
+                current = current->next;
             }
         }
+        std::cout << "Asks: \n     ----------------\nBits: \n";
 
-        if (order.qty > 0) {
-            bids[order.price].push(order);
-            std::cout << "Order added to book: Buy " << order.qty << " @ " << order.price << " (ID: " << order.id << ")\n";
-        }
-    }
-
-    void match_sell(Order& order) {
-        while (order.qty > 0 && !bids.empty() && bids.begin()->first >= order.price) {
-            auto& bid_queue = bids.begin()->second;
-            Order& resting_bid = bid_queue.front();
-
-            uint64_t trade_qty = std::min(resting_bid.qty, order.qty);
-            std::cout << "Trade Executed: " << trade_qty << " @ " << bids.begin()->first 
-                      << " (Sell Order " << order.id << " hits Buy Order " << resting_bid.id << ")\n";
-
-            order.qty -= trade_qty;
-            resting_bid.qty -= trade_qty;
-
-            if (resting_bid.qty == 0) {
-                bid_queue.pop();
+        for (auto i = bids.begin(); i != bids.end(); ++i) {
+            Order* current = i->second.head;
+            while (current) {
+                std::cout << "ID: " << current->id << " Price: " << current->price 
+                          << " $ Qty: " << current->qty << '\n';
+                current = current->next;
             }
-
-            if (bid_queue.empty()) {
-                bids.erase(bids.begin());
-            }
-        }
-
-        if (order.qty > 0) {
-            asks[order.price].push(order);
-            std::cout << "Order added to book: Sell " << order.qty << " @ " << order.price << " (ID: " << order.id << ")\n";
         }
     }
 };
 
 int main() {
     MatchingEngine engine;
-
-    std::cout << "--- Initializing Engine and Submitting Orders ---\n";
-    engine.submit({1, 100, 10, Side::Buy});
-    engine.submit({2, 99, 5, Side::Buy});
-    engine.submit({3, 101, 15, Side::Sell});
-    engine.submit({4, 102, 10, Side::Sell});
-
-    engine.print_book();
-
-    std::cout << "\n--- Submitting Crossing Order ---\n";
-    // This buy order should cross with the sell order at 101, taking 15 qty, leaving 5 qty to rest at 101
-    engine.submit({5, 101, 20, Side::Buy}); 
-
-    engine.print_book();
     
-    std::cout << "\n--- Testing Cancel ---\n";
-    engine.cancel_order("order_123");
+    for (int price = 90; price < 100; ++price) {
+        engine.Submit(price, 10, Side::Buy, Type::Limit);
+    }
 
+    for (int price = 100; price < 111; ++price) {
+        engine.Submit(price, 10, Side::Sell, Type::Limit);
+    }
+
+    engine.CancelOrder(6);
+    engine.Submit(103, 5, Side::Buy, Type::PostOnly);
+
+    engine.PrintBooks();
+    
     return 0;
 }
