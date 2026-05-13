@@ -10,85 +10,13 @@
 #include <queue>
 #include <chrono>
 #include <SPSCQueue.h>
+#include "include/MemoryPool.h"
 
 enum struct Side{ Buy, Sell };
 enum struct Type{ Market, Limit, PostOnly};
 
 struct Block{
     Block* next;
-};
-
-// for Lockless ABA
-struct alignas(16) Tagged{ 
-    Block* ptr;
-    uintptr_t version;
-};
-
-template<typename T>
-class MemoryPool{
-private:
-    std::atomic<Tagged> freeHead;
-    char* memoryChunk;
-public:
-    MemoryPool(size_t objectCount) {
-        size_t blockSize = sizeof(T);
-        size_t totalBytes = objectCount * blockSize;
-
-        void* rawPtr = _aligned_malloc(totalBytes, 64);
-        if (!rawPtr) throw std::bad_alloc();
-
-        memoryChunk = static_cast<char*>(rawPtr);
-        Block* head = reinterpret_cast<Block*>(memoryChunk);
-        Block* current = head;
-
-        for (size_t i = 0; i < objectCount - 1; ++i) {
-            char* nextAddress = reinterpret_cast<char*>(current) + blockSize;
-            current->next = reinterpret_cast<Block*>(nextAddress);
-            current = current->next;
-        }
-        current->next = nullptr;
-
-        Tagged initHead; // For Lock-free initializing
-        initHead.ptr = head;
-        initHead.version = 0;
-
-        freeHead.store(initHead);
-    };
-
-    ~MemoryPool(){
-        _aligned_free(memoryChunk);
-    };
-
-    T* allocate() { // CAS process
-        Tagged oldHead = freeHead.load();
-        while (true) {
-            Tagged newHead;
-            newHead.ptr = oldHead.ptr->next;
-            newHead.version = oldHead.version + 1;
-
-            if (freeHead.compare_exchange_weak(oldHead, newHead)) {
-                return reinterpret_cast<T*>(oldHead.ptr);
-            }
-        }
-    };
-
-    void deallocate(T* p) {
-        if (!p) return;
-        Block* BlockToRecycle = reinterpret_cast<Block*>(p);
-        Tagged oldHead = freeHead.load();
-
-        while (true) {
-            BlockToRecycle->next = oldHead.ptr;
-
-            Tagged newHead;
-            newHead.ptr = BlockToRecycle;
-            newHead.version = oldHead.version + 1;
-
-            if (freeHead.compare_exchange_weak(oldHead, newHead)) {
-                break;
-            }
-        }
-    };
 };
 
 struct Order{
@@ -189,7 +117,7 @@ private:
                     orderIndex.erase(resting->id);
                     queue.remove(resting);
                 }
-                if (queue.empty()) asks.erase(bids.begin());
+                if (queue.empty()) asks.erase(asks.begin());
             };
             if (qty > 0 && type == Type::Limit) {
                 Order* order = pool.allocate();
