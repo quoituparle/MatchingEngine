@@ -27,14 +27,14 @@ public:
 
         for (size_t i = 0; i < objectCount - 1; ++i) {
             char* nextAddresse = reinterpret_cast<char*>(current) + blockSize;
-            current->next = reinterpret_cast<char*>(nextAddresse);
+            current->next = reinterpret_cast<Node*>(nextAddresse);
             current = current->next;
         }
         current->next = nullptr;
     };
 
     ~MemoryPool() {
-        _aligned_malloc(memoryChunk);
+        _aligned_free(memoryChunk);
     };
 
     T* allocate() {
@@ -44,10 +44,10 @@ public:
 
         Node* blockToGive = head;
         head = head->next;
-        return blockToGive
+        return blockToGive;
     }
 
-    void dealllocate(void* p) {
+    void deallocate(void* p) {
         Node* node = reinterpret_cast<Node*>(p);
 
         node->next = head;
