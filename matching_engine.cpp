@@ -9,14 +9,25 @@
 #include <unordered_map>
 #include <queue>
 #include <chrono>
-#include <SPSCQueue.h>
+#include "include/SPSCQueue.h"
 #include "include/MemoryPool.h"
 
 enum struct Side{ Buy, Sell };
 enum struct Type{ Market, Limit, PostOnly};
+enum struct Action{ Submit, Cancel};
 
 struct Block{
     Block* next;
+};
+
+struct OrderData {
+    uint64_t id;
+    uint64_t price;
+    uint64_t qty;
+    uint64_t time;
+    Side side;
+    Type type;
+    Action action;
 };
 
 struct Order{
@@ -96,7 +107,7 @@ private:
                     queue.remove(resting);
                     pool.deallocate(resting);
                 }
-                if (queue.empty()) bids.erase(bids.begin());
+                if (queue.empty()) asks.erase(asks.begin());
             };
             if (qty > 0 && type == Type::Limit) {
                 Order* order = pool.allocate();
@@ -117,7 +128,7 @@ private:
                     orderIndex.erase(resting->id);
                     queue.remove(resting);
                 }
-                if (queue.empty()) asks.erase(asks.begin());
+                if (queue.empty()) bids.erase(bids.begin());
             };
             if (qty > 0 && type == Type::Limit) {
                 Order* order = pool.allocate();
@@ -159,11 +170,6 @@ private:
         }
     };
 
-
-
-public:
-    MatchingEngine(size_t poolSize = 100000) : pool(poolSize) {}
-
     void Submit(uint64_t price, uint64_t qty, Side side, Type type) {
         if (type == Type::Limit) LimitSubmit(price, qty, side, type);
         if (type == Type::Market) MarketSubmit(qty, side);
@@ -187,6 +193,38 @@ public:
         
         pool.deallocate(target);
     }
+public:
+    MatchingEngine(size_t poolSize = 100000) : pool(poolSize) {}
+
+    ~MatchingEngine(){Stop();}
+
+    void Start(rigtorp::SPSCQueue<OrderData>& queue) {
+        if (running) return;
+        running = true;
+
+        worker_thread = std::thread([&](){
+            while (running || queue.front() != nullptr) {
+                auto* cmd_ptr = queue.front();
+                if (cmd_ptr) {
+                    OrderData cmd = *cmd_ptr;
+                    queue.pop();
+
+                    if (cmd.action == Action::Submit) {
+                        Submit(cmd.price, cmd.qty, cmd.side, cmd.type);
+                    } else if (cmd.action == Action::Cancel) {
+                        CancelOrder(cmd.id);
+                    }
+                }
+            }
+        });
+    };
+
+    void Stop() {
+        running = false;
+        if (worker_thread.joinable()) {
+            worker_thread.join();
+        };
+    }
 
     void PrintBooks() {
         for (auto i = asks.rbegin(); i != asks.rend(); ++i) {
@@ -208,24 +246,33 @@ public:
             }
         }
     }
+private:
+    std::thread worker_thread;
+    std::atomic<bool> running{false};
 };
 
-
-
 int main(){
+    rigtorp::SPSCQueue<OrderData> queue(1024);
+
     MatchingEngine engine;
+    engine.Start(queue);
+
     for (int price = 90; price < 100; ++price) {
-        engine.Submit(price, 10, Side::Buy, Type::Limit);
+        queue.push(OrderData{0, (uint64_t)price, 10, 0, Side::Buy, Type::Limit, Action::Submit});
     };
 
     for (int price = 100; price < 111; ++price) {
-        engine.Submit(price, 10, Side::Sell, Type::Limit);
+        queue.push(OrderData{0, (uint64_t)price, 10, 0, Side::Sell, Type::Limit, Action::Submit});
     };
 
-    engine.CancelOrder(6);
-    engine.Submit(103, 5, Side::Buy, Type::PostOnly);
+    queue.push(OrderData{6, 0, 0, 0, Side::Buy, Type::Limit, Action::Cancel});
 
+    queue.push(OrderData{0, 103, 5, 0, Side::Buy, Type::PostOnly, Action::Submit});
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    engine.Stop();
     engine.PrintBooks();
-    return 0;
     
+    return 0;
 }

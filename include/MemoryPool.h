@@ -44,7 +44,7 @@ public:
 
         Node* blockToGive = head;
         head = head->next;
-        return blockToGive;
+        return reinterpret_cast<T*>(blockToGive);
     }
 
     void deallocate(void* p) {
