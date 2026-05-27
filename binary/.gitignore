@@ -2,6 +2,7 @@
 *.ilk
 *.bin
 *.exe
+*.obj
 
 *.csv
 *.bin
