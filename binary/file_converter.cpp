@@ -7,7 +7,7 @@
 
 enum struct Side : uint8_t { Buy, Sell };
 
-#pragma pack(push, 1);
+#pragma pack(push, 1)
 struct BinaryOrderData {
     uint64_t id;
     uint64_t price;
@@ -19,16 +19,16 @@ struct BinaryOrderData {
 }; // total size 42 bytes.
 #pragma pack(pop);
 
-static_assert(sizeof(BinaryOrderData) == 42, "Data structure must be 41 bytes.");
+static_assert(sizeof(BinaryOrderData) == 42, "Data structure must be 42 bytes.");
 
 // Binance file structure: ID, price, qty, quote quantity(cash of USDT), timestamp, is_buyer-maker status(T maker/F taker), best-match status(T/F).
 
 Side ParseSide (const std::string& s) {
-    return (s == 'TRUE') ? Side::Sell : Side::Buy;
+    return (s == "TRUE") ? Side::Sell : Side::Buy;
 };
 
 bool ParseBestMatch (const std::string& s) {
-    return (s == 'TRUE') ? true : false;
+    return (s == "TRUE") ? true : false;
 }
 
 void Convert(const std::string& csvPath, const std::string& binPath) {
@@ -57,9 +57,9 @@ void Convert(const std::string& csvPath, const std::string& binPath) {
         std::string field;
 
         std::getline(ss, field, ','); data.id = std::stoull(field);
-        std::getline(ss, field, ','); data.price = std::stoull(field);
-        std::getline(ss, field, ','); data.qty = std::stoull(field);
-        std::getline(ss, field, ','); data.quote_qty = std::stoull(field);
+        std::getline(ss, field, ','); data.price = static_cast<uint64_t>(std::stod(field) * 1e8);
+        std::getline(ss, field, ','); data.qty = static_cast<uint64_t>(std::stod(field) * 1e8); // avoid float bias
+        std::getline(ss, field, ','); data.quote_qty = static_cast<uint64_t>(std::stod(field) * 1e8);
         std::getline(ss, field, ','); data.time = std::stoull(field);
         std::getline(ss, field, ','); data.side = ParseSide(field);
         std::getline(ss, field, ','); data.best_match = ParseBestMatch(field);
@@ -68,5 +68,10 @@ void Convert(const std::string& csvPath, const std::string& binPath) {
         recordCount++;
     }
     std::cout << "Record count now " << recordCount << std::endl;
+}
+
+int main() {
+    Convert("BTCUSDT-trades-2026-03-03.csv", "output.bin");
+    return 0;
 }
 
