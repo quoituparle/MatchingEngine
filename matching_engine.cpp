@@ -11,6 +11,7 @@
 #include <chrono>
 #include "include/SPSCQueue.h"
 #include "include/MemoryPool.h"
+#include "include/mmap.h"
 
 enum struct Side{ Buy, Sell };
 enum struct Type{ Market, Limit, PostOnly};
