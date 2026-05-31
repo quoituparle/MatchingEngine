@@ -175,7 +175,7 @@ int handle_error(const std::error_code& error)
     return error.value();
 }
 
-void mmap(const std::string& path, const std::error_code& error) {
+auto* mmap(const std::string& path, const std::error_code& error) {
         mio::mmap_source ro_mmap;
         ro_mmap.map(path, error);
         if (error) { return handle_error(error); }
@@ -183,4 +183,5 @@ void mmap(const std::string& path, const std::error_code& error) {
         const auto* data = ro_mmap.data();
         static_assert(data, "Cannot find ro data");
         auto* orders = reinterpret_cast<OrderData*>(data);
+        return orders;
 }
