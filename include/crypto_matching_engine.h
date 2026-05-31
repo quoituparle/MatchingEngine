@@ -140,7 +140,7 @@ public:
         if (worker_thread.joinable()) {
             worker_thread.join();
         };
-    }
+    };
 
     void PrintBooks() {
         for (auto i = asks.rbegin(); i != asks.rend(); ++i) {
@@ -161,8 +161,26 @@ public:
                 current = current->next;
             }
         }
-    }
+    };
 private:
     std::atomic<bool> running(false);
     std::thread worker_thread;
 };
+
+// using mio libaries
+int handle_error(const std::error_code& error)
+{
+    const auto& errmsg = error.message();
+    std::printf("error mapping file: %s, exiting...\n", errmsg.c_str());
+    return error.value();
+}
+
+void mmap(const std::string& path, const std::error_code& error) {
+        mio::mmap_source ro_mmap;
+        ro_mmap.map(path, error);
+        if (error) { return handle_error(error); }
+
+        const auto* data = ro_mmap.data();
+        static_assert(data, "Cannot find ro data");
+        auto* orders = reinterpret_cast<OrderData*>(data);
+}
