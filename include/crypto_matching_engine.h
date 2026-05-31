@@ -9,12 +9,14 @@
 #include <unordered_map>
 #include <queue>
 #include <chrono>
+#include <system_error>
 #include "SPSCQueue.h"
 #include "MemoryPool.h"
 #include "mmap.h"
 
 enum struct Side : uint8_t { Buy, Sell };
 
+#pragma pack(push, 1)
 struct OrderData {
     uint64_t id;
     uint64_t price;
@@ -23,7 +25,8 @@ struct OrderData {
     uint64_t time;
     Side side;
     bool best_match;
-}
+};
+#pragma pack(pop)
 
 struct Order {
     uint64_t id;
@@ -35,7 +38,7 @@ struct Order {
     bool best_match;
     Order* next;
     Order* prev;
-}
+};
 
 struct Queue{
     Order* head = nullptr;
@@ -62,6 +65,9 @@ struct Queue{
         if (order->next) {
             order->next->prev = order->prev;
         } else tail = order->prev;
+
+        order->next = nullptr;
+        order->prev = nullptr;
     }
 
     bool empty() const {
@@ -75,46 +81,78 @@ private:
     std::map<uint64_t, Queue, std::greater<uint64_t>> bids;
     std::map<uint64_t, Queue, std::less<uint64_t>> asks;
 
-    void Submit(OrderData) {
-        if (OrderData::side == Side::Buy) {
-            while(OrderData::qty > 0 && !asks.empty() && asks.begin()->first <= OrderData::price) {
+    void Submit(OrderData order) {
+        if (order.side == Side::Buy) {
+            while(order.qty > 0 && !asks.empty() && asks.begin()->first <= order.price) {
                 auto& queue = asks.begin()->second;
                 Order* resting = queue.head;
-                uint64_t excuted = std::min(resting->qty, OrderData::qty);
+                
+                if (!resting) {
+                    asks.erase(asks.begin());
+                    break;
+                }
 
-                OrderData::qty-=excuted;
-                resting->qty-=excuted;
+                uint64_t excuted = (std::min)(resting->qty, order.qty);
+                
+                if (excuted == 0) {
+                    break;
+                }
+
+                order.qty -= excuted;
+                resting->qty -= excuted;
 
                 if (resting->qty == 0) {
                     queue.remove(resting);
                     pool.deallocate(resting);
                 }
-                if (queue.empty()) asks.erase(asks.begin());
-            };
-            Order* order = pool.allocate();
-            new (order) Order{OrderData::id, OrderData::price, OrderData::qty, OrderData::quote_qty, OrderData::time, OrderData::side, OrderData::best_match, nullptr, nullptr};
+                
+                if (queue.empty()) {
+                    asks.erase(asks.begin());
+                }
+            }
+            
+            if (order.qty > 0) {
+                Order* new_order = pool.allocate();
+                new (new_order) Order{order.id, order.price, order.qty, order.quote_qty, order.time, order.side, order.best_match, nullptr, nullptr};
+                bids[order.price].intrusive_push_back(new_order);
+            }
         } else {
-            while(OrderData::qty > 0 && !bids.empty() && bids.begin()->first >= OrderData::price) {
+            while(order.qty > 0 && !bids.empty() && bids.begin()->first >= order.price) {
                 auto& queue = bids.begin()->second;
                 Order* resting = queue.head;
-                uint64_t excuted = std::min(resting->qty, OrderData::qty);
+                
+                if (!resting) {
+                    bids.erase(bids.begin());
+                    break;
+                }
 
-                OrderData::qty-=excuted;
-                resting->qty-=excuted;
+                uint64_t excuted = (std::min)(resting->qty, order.qty);
+                if (excuted == 0) {
+                    break;
+                }
+
+                order.qty -= excuted;
+                resting->qty -= excuted;
 
                 if (resting->qty == 0) {
                     queue.remove(resting);
                     pool.deallocate(resting);
                 }
-                if (queue.empty()) bids.erase(bids.begin());
-            };
-            Order* order = pool.allocate();
-            new (order) Order{OrderData::id, OrderData::price, OrderData::qty, OrderData::quote_qty, OrderData::time, OrderData::side, OrderData::best_match, nullptr, nullptr};
-        };
-    };
+                if (queue.empty()) {
+                    bids.erase(bids.begin());
+                }
+            }
+            
+            if (order.qty > 0) {
+                Order* new_order = pool.allocate();
+                new (new_order) Order{order.id, order.price, order.qty, order.quote_qty, order.time, order.side, order.best_match, nullptr, nullptr};
+                asks[order.price].intrusive_push_back(new_order);
+            }
+        }
+    }
 
 public:
-    CryptoMatchingEngine(size_t poolSize = 100000) : pool(poolSize) {}
+    CryptoMatchingEngine(const size_t poolSize = 8000000) : pool(poolSize) {} // make the memory pool as large as possible when processing huge files.
 
     ~CryptoMatchingEngine(){}
 
@@ -129,13 +167,14 @@ public:
                     OrderData cmd = *cmd_ptr;
                     queue.pop();
 
-                    Submit(OrderData);
+                    Submit(cmd);
                 }
             }
         });
     };
 
     void Stop() {
+        if (!running) return;
         running = false;
         if (worker_thread.joinable()) {
             worker_thread.join();
@@ -163,7 +202,7 @@ public:
         }
     };
 private:
-    std::atomic<bool> running(false);
+    std::atomic<bool> running = false;
     std::thread worker_thread;
 };
 
@@ -175,13 +214,12 @@ int handle_error(const std::error_code& error)
     return error.value();
 }
 
-auto* mmap(const std::string& path, const std::error_code& error) {
-        mio::mmap_source ro_mmap;
+const OrderData* mmap(mio::mmap_source& ro_mmap, const std::string& path, std::error_code& error) {
         ro_mmap.map(path, error);
-        if (error) { return handle_error(error); }
+        if (error) { return nullptr; }
 
         const auto* data = ro_mmap.data();
-        static_assert(data, "Cannot find ro data");
-        auto* orders = reinterpret_cast<OrderData*>(data);
-        return orders;
+        if (!data) { return nullptr; };
+        return reinterpret_cast<const OrderData*>(data);
+        
 }

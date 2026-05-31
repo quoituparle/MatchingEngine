@@ -17,10 +17,6 @@ enum struct Side{ Buy, Sell };
 enum struct Type{ Market, Limit, PostOnly};
 enum struct Action{ Submit, Cancel};
 
-struct Block{
-    Block* next;
-};
-
 struct OrderData {
     uint64_t id;
     uint64_t price;
