@@ -44,7 +44,7 @@ struct Queue{
 
     // FIFO
     // oN(Tail) -> ... -> o3 -> o2 -> o1(Head)
-    void intrusive_push_back(Order* order) { // Use intrusive list instead of original double list;
+    void intrusive_push_back(Order* order) { // Use intrusive list instead of list;
         order->next = nullptr;
         if (!tail) {
             head = tail = order;
