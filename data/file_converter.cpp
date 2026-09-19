@@ -71,7 +71,6 @@ void Convert(const std::string& csvPath, const std::string& binPath) {
 }
 
 int main() {
-    Convert("BTCUSDT-trades-2026-03-03.csv", "output.bin");
+    Convert("BTCUSDT-trades-2026-09-18.csv", "output.bin");
     return 0;
 }
-

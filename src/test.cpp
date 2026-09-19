@@ -1,11 +1,11 @@
-#include "include/crypto_matching_engine.h"
-#include "include/mmap.h"
+#include "../include/crypto_matching_engine.h"
+#include "../include/mmap.h"
 #include <iostream>
 #include <string>
 #include <system_error>
 #include <chrono>
 
-const std::string path = "binary/output.bin"; // change to your own files.
+const std::string path = "data/output.bin"; // change to your own files.
 
 int main() {
     std::error_code error;

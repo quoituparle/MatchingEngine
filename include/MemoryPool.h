@@ -1,56 +1,51 @@
-#include <vector>
 #include <iostream>
-#include <thread>
-#include <algorithm>
-#include <cstdint>
-#include <malloc.h>
+#include <cassert>
 #include <atomic>
+#include <algorithm>
+#include <new>
+#include <utility>
 
 template <typename T>
 class MemoryPool {
-private:
-    struct Node {
-        Node* next;
-    };
-    Node* ptr;
-    Node* head;
-    char* memoryChunk;
+
 public:
-    MemoryPool(size_t objectCount) {
-        size_t blockSize = sizeof(T);
-        size_t totalBytes = objectCount * blockSize;
-
-        void* rawPtr = _aligned_malloc(totalBytes, 64);
-        memoryChunk = static_cast<char*>(rawPtr);
-        head = reinterpret_cast<Node*>(memoryChunk);
-        Node* current = head;
-
-        for (size_t i = 0; i < objectCount - 1; ++i) {
-            char* nextAddresse = reinterpret_cast<char*>(current) + blockSize;
-            current->next = reinterpret_cast<Node*>(nextAddresse);
-            current = current->next;
+    MemoryPool(size_t capacity) : capacity_(capacity) {
+        for (int i = 0; i < capacity_; ++i) {
+            Block* node = reinterpret_cast<Block*>(storage_ + i * aligned_size);
+            node->next = head;
+            head = node;
         }
-        current->next = nullptr;
-    };
+    }
 
-    ~MemoryPool() {
-        _aligned_free(memoryChunk);
-    };
-
-    T* allocate() {
-        if (!head) {
-            return nullptr;
-        }
-
-        Node* blockToGive = head;
+    template <typename... Args>
+    T* allocate(Args&&... args) {
+        if (!head) return nullptr;
+        Block* block = head;
         head = head->next;
-        return reinterpret_cast<T*>(blockToGive);
+        T* ptr = reinterpret_cast<T*>(block);
+        new (ptr) T(std::forward<Args>(args)...);
+        return ptr;
     }
 
-    void deallocate(void* p) {
-        Node* node = reinterpret_cast<Node*>(p);
-
-        node->next = head;
-        head = node;
+    void deallocate(T* ptr) {
+        ptr->~T();
+        Block* block = reinterpret_cast<Block*>(ptr);
+        block->next = head;
+        head = block;
     }
+
+private:
+    size_t capacity_;
+    struct Block {
+        Block* next;
+    };
+
+    Block* head = nullptr;
+
+    char padding[8];
+
+    static constexpr size_t block_size = std::max(sizeof(T), sizeof(Block));
+    static constexpr size_t block_alignment = std::max(alignof(T), alignof(Block));
+    static constexpr size_t aligned_size = ((block_size + block_alignment - 1) / block_alignment) * block_alignment;
+    alignas(block_alignment) char storage_[capacity_ * aligned_size];
 };
