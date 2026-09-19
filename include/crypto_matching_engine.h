@@ -77,7 +77,7 @@ struct Queue{
 
 class CryptoMatchingEngine {
 private:
-    MemoryPool<Order> pool;
+    MemoryPool<Order, 8000000> pool;
     std::map<uint64_t, Queue, std::greater<uint64_t>> bids;
     std::map<uint64_t, Queue, std::less<uint64_t>> asks;
 
@@ -112,9 +112,11 @@ private:
             }
             
             if (order.qty > 0) {
-                Order* new_order = pool.allocate();
-                new (new_order) Order{order.id, order.price, order.qty, order.quote_qty, order.time, order.side, order.best_match, nullptr, nullptr};
+                Order* new_order = pool.allocate(Order{order.id, order.price, order.qty, order.quote_qty, order.time, order.side, order.best_match, nullptr, nullptr});
                 bids[order.price].intrusive_push_back(new_order);
+                if (!new_order) {
+                    throw std::bad_alloc();
+                };
             }
         } else {
             while(order.qty > 0 && !bids.empty() && bids.begin()->first >= order.price) {
@@ -144,15 +146,17 @@ private:
             }
             
             if (order.qty > 0) {
-                Order* new_order = pool.allocate();
-                new (new_order) Order{order.id, order.price, order.qty, order.quote_qty, order.time, order.side, order.best_match, nullptr, nullptr};
+                Order* new_order = pool.allocate(Order{order.id, order.price, order.qty, order.quote_qty, order.time, order.side, order.best_match, nullptr, nullptr});
                 asks[order.price].intrusive_push_back(new_order);
+                if (!new_order) {
+                    throw std::bad_alloc();
+                };
             }
         }
     }
 
 public:
-    CryptoMatchingEngine(const size_t poolSize = 8000000) : pool(poolSize) {} // make the memory pool as large as possible when processing huge files.
+    CryptoMatchingEngine() {}
 
     ~CryptoMatchingEngine(){}
 

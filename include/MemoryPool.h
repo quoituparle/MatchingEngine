@@ -5,12 +5,12 @@
 #include <new>
 #include <utility>
 
-template <typename T>
+template <typename T, std::size_t capacity>
 class MemoryPool {
 
 public:
-    MemoryPool(size_t capacity) : capacity_(capacity) {
-        for (int i = 0; i < capacity_; ++i) {
+    MemoryPool() {
+        for (int i = 0; i < capacity; ++i) {
             Block* node = reinterpret_cast<Block*>(storage_ + i * aligned_size);
             node->next = head;
             head = node;
@@ -35,7 +35,6 @@ public:
     }
 
 private:
-    size_t capacity_;
     struct Block {
         Block* next;
     };
@@ -47,5 +46,5 @@ private:
     static constexpr size_t block_size = std::max(sizeof(T), sizeof(Block));
     static constexpr size_t block_alignment = std::max(alignof(T), alignof(Block));
     static constexpr size_t aligned_size = ((block_size + block_alignment - 1) / block_alignment) * block_alignment;
-    alignas(block_alignment) char storage_[capacity_ * aligned_size];
+    alignas(block_alignment) char storage_[capacity * aligned_size];
 };

@@ -4,8 +4,9 @@
 #include <string>
 #include <system_error>
 #include <chrono>
+#include <memory>
 
-const std::string path = "data/output.bin"; // change to your own files.
+const std::string path = "../data/output.bin"; // change to your own files.
 
 int main() {
     std::error_code error;
@@ -15,7 +16,8 @@ int main() {
 
     rigtorp::SPSCQueue<OrderData> queue(131072); // When you have a large file don't forget to expand queue volumn
 
-    CryptoMatchingEngine engine;
+    auto engine_storage = std::make_unique<CryptoMatchingEngine>();
+    CryptoMatchingEngine& engine = *engine_storage;
     engine.Start(queue);
 
     size_t count = ro_mmap.size() / sizeof(OrderData);
