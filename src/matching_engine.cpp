@@ -9,9 +9,11 @@
 #include <unordered_map>
 #include <queue>
 #include <chrono>
-#include "include/SPSCQueue.h"
-#include "include/MemoryPool.h"
-#include "include/mmap.h"
+#include <memory>
+#include <new>
+#include "../include/SPSCQueue.h"
+#include "../include/MemoryPool.h"
+#include "../include/mmap.h"
 
 enum struct Side{ Buy, Sell };
 enum struct Type{ Market, Limit, PostOnly};
@@ -72,7 +74,7 @@ struct Queue{
 
 class MatchingEngine {
 private:
-    MemoryPool<Order> pool;
+    MemoryPool<Order, 100000> pool;
     std::map<uint64_t, Queue, std::greater<uint64_t>> bids; // highest buy
     std::map<uint64_t, Queue, std::less<uint64_t>> asks; // lowest sell
 
@@ -107,8 +109,8 @@ private:
                 if (queue.empty()) asks.erase(asks.begin());
             };
             if (qty > 0 && type == Type::Limit) {
-                Order* order = pool.allocate();
-                new (order) Order{orderId, price, qty, TimeStamp(), side, type, nullptr, nullptr};
+                Order* order = pool.allocate(Order{orderId, price, qty, TimeStamp(), side, type, nullptr, nullptr});
+                if (!order) throw std::bad_alloc();
                 bids[price].intrusive_push_back(order);
                 orderIndex[order->id] = order;
             };
@@ -128,8 +130,8 @@ private:
                 if (queue.empty()) bids.erase(bids.begin());
             };
             if (qty > 0 && type == Type::Limit) {
-                Order* order = pool.allocate();
-                new (order) Order{orderId, price, qty, TimeStamp(), side, type, nullptr, nullptr};
+                Order* order = pool.allocate(Order{orderId, price, qty, TimeStamp(), side, type, nullptr, nullptr});
+                if (!order) throw std::bad_alloc();
                 asks[price].intrusive_push_back(order);
                 orderIndex[order->id] = order;
             }
@@ -153,15 +155,15 @@ private:
         if (side == Side::Buy) {
             if (!asks.empty() && asks.begin()->first <= price) return;
 
-            Order* order = pool.allocate();
-            new (order) Order{Id, price, qty, TimeStamp(), side, type, nullptr, nullptr};
+            Order* order = pool.allocate(Order{Id, price, qty, TimeStamp(), side, type, nullptr, nullptr});
+            if (!order) throw std::bad_alloc();
             bids[price].intrusive_push_back(order);
             orderIndex[order->id] = order;
         } else {
             if (!bids.empty() && bids.begin()->first >= price) return;
 
-            Order* order = pool.allocate();
-            new (order) Order{Id, price, qty, TimeStamp(), side, type, nullptr, nullptr};
+            Order* order = pool.allocate(Order{Id, price, qty, TimeStamp(), side, type, nullptr, nullptr});
+            if (!order) throw std::bad_alloc();
             asks[price].intrusive_push_back(order);
             orderIndex[order->id] = order;
         }
@@ -191,7 +193,7 @@ private:
         pool.deallocate(target);
     }
 public:
-    MatchingEngine(size_t poolSize = 100000) : pool(poolSize) {}
+    MatchingEngine() {}
 
     ~MatchingEngine(){Stop();}
 
@@ -251,7 +253,8 @@ private:
 int main(){
     rigtorp::SPSCQueue<OrderData> queue(1024);
 
-    MatchingEngine engine;
+    auto engine_storage = std::make_unique<MatchingEngine>();
+    MatchingEngine& engine = *engine_storage;
     engine.Start(queue);
 
     for (int price = 90; price < 100; ++price) {
