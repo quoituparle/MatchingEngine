@@ -6,7 +6,7 @@
 #include <chrono>
 #include <memory>
 
-const std::string path = "../data/output.bin"; // change to your own files.
+const std::string path = "data/output.bin"; // change to your own files.
 
 int main() {
     std::error_code error;

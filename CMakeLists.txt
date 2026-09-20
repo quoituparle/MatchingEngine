@@ -1,43 +1,62 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.16)
 
 project(MatchingEngine
-    VERSION 1.0
+    VERSION 0.1.0
     LANGUAGES CXX
 )
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# =====================
-# Core library
-# =====================
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-add_library(matching_engine
-    matching_engine.cpp
+find_package(Threads REQUIRED)
+
+add_library(engine_common INTERFACE)
+
+target_include_directories(engine_common INTERFACE
+    "${PROJECT_SOURCE_DIR}/include"
 )
 
-target_include_directories(matching_engine
-    PUBLIC
-        ${PROJECT_SOURCE_DIR}/include
+target_link_libraries(engine_common INTERFACE
+    Threads::Threads
 )
 
-target_compile_options(matching_engine
-    PRIVATE
-        -Wall
-        -Wextra
-        -O3
+function(enable_project_warnings target)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target} PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+        )
+    endif()
+endfunction()
+
+add_executable(matching_engine
+    src/matching_engine.cpp
 )
 
+target_link_libraries(matching_engine PRIVATE engine_common)
+enable_project_warnings(matching_engine)
 
-# =====================
-# Test executable
-# =====================
-
-add_executable(test_engine
-    test.cpp
+add_executable(crypto_engine
+    src/launch.cpp
 )
 
-target_link_libraries(test_engine
-    PRIVATE
-        matching_engine
+target_link_libraries(crypto_engine PRIVATE engine_common)
+enable_project_warnings(crypto_engine)
+
+add_executable(file_converter
+    data/file_converter.cpp
 )
+
+target_link_libraries(file_converter PRIVATE engine_common)
+enable_project_warnings(file_converter)
+
+option(BUILD_BENCHMARKS "Build benchmarks" OFF)
+
+if(BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()

@@ -17,7 +17,7 @@ struct BinaryOrderData {
     Side side;
     bool best_match;
 }; // total size 42 bytes.
-#pragma pack(pop);
+#pragma pack(pop)
 
 static_assert(sizeof(BinaryOrderData) == 42, "Data structure must be 42 bytes.");
 
