@@ -14,10 +14,13 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 add_library(engine_common INTERFACE)
 
-add_executable(
-    test
-    test.cpp
-)
+add_executable(test test.cpp)
 target_link_libraries(test PRIVATE engine_common)
 
 add_subdirectory(benchmark)
+
+add_executable(main src/main.cpp)
+target_link_libraries(main PRIVATE engine_common)
+
+add_executable(matching_engine src/matching_engine.cpp)
+target_link_libraries(matching_engine PRIVATE engine_common)
