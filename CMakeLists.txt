@@ -15,7 +15,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_library(engine_common INTERFACE)
 
 add_executable(
-    helloworld
-    helloworld.cpp
+    test
+    test.cpp
 )
-target_link_libraries(helloworld PRIVATE engine_common)
+target_link_libraries(test PRIVATE engine_common)
