@@ -45,7 +45,7 @@ public:
         auto readId = readId_.load(std::memory_order_relaxed);
         if (readId == writeCache_) {
             writeCache_ = writeId_.load(std::memory_order_acquire);
-            if (readId = writeCache_) return false;
+            if (readId == writeCache_) return false;
         }
         slots_[readId].~T();
         auto next = readId + 1;
