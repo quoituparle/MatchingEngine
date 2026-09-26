@@ -4,7 +4,6 @@
 #include <atomic>
 #include <new>
 #include <utility>
-#include "../memory_pool/pool.h"
 
 template<typename T, size_t Capacity, typename Allocator = std::allocator<T>>
 class SPSC {

@@ -40,7 +40,7 @@ private:
 
     Block* head = nullptr;
 
-    
+    //char padding[8] // if Cache Line split add padding.
 
     static constexpr size_t block_size = std::max(sizeof(T), sizeof(Block));
     static constexpr size_t block_alignment = std::max(alignof(T), alignof(Block));

@@ -19,3 +19,5 @@ add_executable(
     test.cpp
 )
 target_link_libraries(test PRIVATE engine_common)
+
+add_subdirectory(benchmark)
