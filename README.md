@@ -42,8 +42,8 @@ The engine is profiled with an optimized build using **Linux `perf`** and **Flam
 
 ```bash
 -O3 -g -fno-omit-frame-pointer
-perf record -F 999 -g --call-graph fp ./crypto_engine
-perf stat ./crypto_engine
+perf record -F 999 -g --call-graph fp ./build/bin/crypto_engine
+perf stat ./build/bin/crypto_engine
 ```
 
 ![Linux perf FlameGraph](flame.svg)
