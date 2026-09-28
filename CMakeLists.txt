@@ -12,6 +12,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+set(CMAKE_BUILD_TYPE Release)
+
+add_compile_options(
+    -O3
+    -g
+    -fno-omit-frame-pointer
+) # Set up O3 perf frame
+
 find_package(Threads REQUIRED)
 
 add_library(engine_common INTERFACE)

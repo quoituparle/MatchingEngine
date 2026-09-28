@@ -13,5 +13,4 @@ build/
 *.perf
 *.data
 *.data.old
-*.svg
 FlameGraph/
