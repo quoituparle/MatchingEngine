@@ -5,12 +5,13 @@
 #include <new>
 #include <utility>
 #include <bit>
+#include <memory> //allocator
 
 template <typename T, std::size_t N> 
 class Pool {
 public:
     Pool() {
-        for (int i = 0; i < N; ++i) {
+        for (size_t i = 0; i < N; ++i) {
             Block* node = reinterpret_cast<Block*>(storage_ + i * aligned_size);
             node->next = head;
             head = node;

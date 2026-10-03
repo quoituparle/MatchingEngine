@@ -18,7 +18,7 @@ struct TestObject {
 constexpr size_t N = 100000;
 
 
-static void BM_Pool_Allocate_Deallocate(benchmark::State& state)
+static void BM_Pool(benchmark::State& state)
 {
     Pool<TestObject, N> pool;
 
@@ -43,7 +43,6 @@ static void BM_Pool_Allocate_Deallocate(benchmark::State& state)
     }
 }
 
-BENCHMARK(BM_Pool_Allocate_Deallocate)
-    ->Repetitions(10)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_Pool)->Repetitions(10)->Unit(benchmark::kMillisecond);
 
 BENCHMARK_MAIN();
