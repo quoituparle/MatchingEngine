@@ -68,6 +68,10 @@ int main() {
             );
         }
 
+        ws.next_layer().handshake(
+            ssl::stream_base::client
+        );
+
         //decorator
         ws.set_option(websocket::stream_base::decorator(
             [](websocket::request_type& req)
