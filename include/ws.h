@@ -89,7 +89,7 @@ int connect() {
         // ws write
         std::string req = R"({
             "method": "SUBSCRIBE",
-            "params": ["btcusdt@depth@100ms"],
+            "params": ["btcusdt@trade"],
             "id": 1
         })";
 
@@ -109,27 +109,7 @@ int connect() {
         while (true) {
             ws.read(buffer);
 
-            ++messages;
-            ++total;
-            bytes += buffer.size();
-
-            buffer.consume(buffer.size());
-
-            auto now = clock::now();
-            double elapsed =
-                std::chrono::duration<double>(now - last).count();
-
-            if (elapsed >= 1.0) {
-                std::cout
-                    << "msg/s: " << messages / elapsed
-                    << " | KB/s: " << bytes / elapsed / 1e3
-                    << " | Total: " << total
-                    << '\n';
-
-                messages = 0;
-                bytes = 0;
-                last = now;
-            }
+            std::cout << beast::make_printable(buffer.data()) << '\n';
         }
 
     } catch(const std::exception& e) {
