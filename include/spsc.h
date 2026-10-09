@@ -17,12 +17,12 @@ public:
         slots_ = alloc_traits::allocate(allocator_, capacity_);
     }
 
-    ~SPSC() {
+    ~SPSC noexcept() {
         alloc_traits::deallocate(allocator_, slots_, capacity_);
     }
 
     template<typename... Args>
-    bool try_emplace(Args&&... args) {
+    bool try_emplace noexcept(Args&&... args) {
         auto writeId = writeId_.load(std::memory_order_relaxed);
         auto next = writeId + 1;
         if (next == capacity_) {
@@ -37,11 +37,11 @@ public:
         return true;
     }
 
-    bool try_push(T& item) {
+    bool try_push noexcept(T& item) {
         return try_emplace(item);
     }
 
-    bool try_pop() {
+    bool try_pop noexcept() {
         auto readId = readId_.load(std::memory_order_relaxed);
         if (readId == writeCache_) {
             writeCache_ = writeId_.load(std::memory_order_acquire);
