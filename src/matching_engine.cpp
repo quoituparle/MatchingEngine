@@ -11,7 +11,7 @@
 #include <chrono>
 #include <memory>
 #include <new>
-#include "../include/SPSCQueue.h"
+#include "../include/spsc.h"
 #include "../include/MemoryPool.h"
 #include "../include/mmap.h"
 
@@ -197,7 +197,8 @@ public:
 
     ~MatchingEngine(){Stop();}
 
-    void Start(rigtorp::SPSCQueue<OrderData>& queue) {
+    template<size_t Capacity>
+    void Start(SPSC<OrderData, Capacity>& queue) {
         if (running) return;
         running = true;
 
@@ -206,7 +207,7 @@ public:
                 auto* cmd_ptr = queue.front();
                 if (cmd_ptr) {
                     OrderData cmd = *cmd_ptr;
-                    queue.pop();
+                    queue.try_pop();
 
                     if (cmd.action == Action::Submit) {
                         Submit(cmd.price, cmd.qty, cmd.side, cmd.type);
@@ -251,7 +252,7 @@ private:
 };
 
 int main(){
-    rigtorp::SPSCQueue<OrderData> queue(1024);
+    SPSC<OrderData, 1024> queue;
 
     auto engine_storage = std::make_unique<MatchingEngine>();
     MatchingEngine& engine = *engine_storage;

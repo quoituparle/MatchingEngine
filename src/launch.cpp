@@ -14,7 +14,7 @@ int main() {
     auto orders = mmap(ro_mmap, path, error);
     if (error) { return handle_error(error); }
 
-    rigtorp::SPSCQueue<OrderData> queue(131072); // When you have a large file don't forget to expand queue volumn
+    SPSC<OrderData, 131072> queue;
 
     auto engine_storage = std::make_unique<CryptoMatchingEngine>();
     CryptoMatchingEngine& engine = *engine_storage;
@@ -37,10 +37,7 @@ int main() {
             std::this_thread::yield();
         }
     }
-    while (queue.front() != nullptr) {
-        std::this_thread::yield();
-    }
-    engine.Stop();
+    engine.Stop(); // Join after the consumer drains all queued orders.
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 

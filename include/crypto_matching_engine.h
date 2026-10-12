@@ -10,7 +10,7 @@
 #include <queue>
 #include <chrono>
 #include <system_error>
-#include "SPSCQueue.h"
+#include "spsc.h"
 #include "MemoryPool.h"
 #include "mmap.h"
 
@@ -157,9 +157,10 @@ private:
 public:
     CryptoMatchingEngine() {}
 
-    ~CryptoMatchingEngine(){}
+    ~CryptoMatchingEngine(){Stop();}
 
-    void Start(rigtorp::SPSCQueue<OrderData>& queue) {
+    template<size_t Capacity>
+    void Start(SPSC<OrderData, Capacity>& queue) {
         if (running) return;
         running = true;
 
@@ -168,7 +169,7 @@ public:
                 auto* cmd_ptr = queue.front();
                 if (cmd_ptr) {
                     OrderData cmd = *cmd_ptr;
-                    queue.pop();
+                    queue.try_pop();
 
                     Submit(cmd);
                 }
